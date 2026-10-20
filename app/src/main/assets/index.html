@@ -54,6 +54,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2
   <div id="bar">
     <button class="btn" id="back">Back</button>
     <div id="pname"></div>
+    <button class="btn" id="fav"></button>
     <button class="btn" id="prev">Prev</button>
     <button class="btn" id="next">Next</button>
   </div>
@@ -63,6 +64,7 @@ const DEFAULT_URL="https://iptv-org.github.io/iptv/countries/in.m3u";
 const $=id=>document.getElementById(id);
 let channels=[],cat="All",list=[],idx=-1,hls=null,barTimer;
 const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+let favs=new Set(JSON.parse(store.get("favs")||"[]")),favChanged=false;
 let dead=new Set(JSON.parse(store.get("dead")||"[]"));
 
 function parseM3U(t){
@@ -87,7 +89,7 @@ async function load(url){
 }
 function render(){
   const counts={};channels.forEach(c=>counts[c.group]=(counts[c.group]||0)+1);
-  const names=["All",...Object.keys(counts).sort()];
+  const names=["Favorites","All",...Object.keys(counts).sort()];counts.Favorites=channels.filter(c=>favs.has(c.url)).length;
   $("cats").innerHTML="";
   names.forEach(n=>{
     const b=document.createElement("button");b.className="cat"+(n===cat?" on":"");
@@ -96,23 +98,25 @@ function render(){
     $("cats").append(b);
   });
   const q=$("q").value.toLowerCase();
-  list=channels.filter(c=>(cat==="All"||c.group===cat)&&c.name.toLowerCase().includes(q)&&!dead.has(c.url));
+  list=channels.filter(c=>{if(!c.name.toLowerCase().includes(q))return false;if(cat==="Favorites")return favs.has(c.url);return(cat==="All"||c.group===cat)&&!dead.has(c.url)});
   const g=$("grid");g.innerHTML="";g.scrollTop=0;
-  if(!list.length){g.innerHTML='<div id="msg">No channels here.</div>';return}
+  if(!list.length){g.innerHTML='<div id="msg">'+(cat==="Favorites"?"No favorites yet. Open a working channel and press the Favorite button.":"No channels here.")+'</div>';return}
   const f=document.createDocumentFragment();
   list.forEach((c,i)=>{
     const b=document.createElement("button");b.className="ch";
     const lg=document.createElement("div");lg.className="lg";
     if(c.logo){const im=document.createElement("img");im.src=c.logo;im.loading="lazy";im.alt="";im.onerror=()=>im.remove();lg.append(im)}
-    const nm=document.createElement("span");nm.className="nm";nm.textContent=c.name;
+    const nm=document.createElement("span");nm.className="nm";nm.textContent=(favs.has(c.url)?"★ ":"")+c.name;
     b.append(lg,nm);b.onclick=()=>play(i);f.append(b);
   });
   g.append(f);
 }
+function updFav(){const c=list[idx];$("fav").textContent=c&&favs.has(c.url)?"★ Favorited":"☆ Favorite"}
+$("fav").onclick=()=>{const c=list[idx];if(!c)return;favs.has(c.url)?favs.delete(c.url):favs.add(c.url);store.set("favs",JSON.stringify([...favs]));favChanged=true;updFav();showBar()};
 function play(i){
   if(i<0||i>=list.length)return;
   idx=i;const c=list[i],v=$("v");
-  $("player").style.display="block";$("pname").textContent=c.name;$("perr").style.display="none";
+  $("player").style.display="block";$("pname").textContent=c.name;updFav();$("perr").style.display="none";
   if(hls){hls.destroy();hls=null}
   const fail=()=>{$("perr").style.display="flex";$("perr").textContent="This channel isn’t working. Press Next to try another, or Back to leave.";dead.add(c.url);store.set("dead",JSON.stringify([...dead]))};
   if(window.Hls&&Hls.isSupported()&&/\.m3u8|\.m3u/i.test(c.url)){
@@ -126,6 +130,7 @@ function stop(){
   if(hls){hls.destroy();hls=null}
   const v=$("v");v.pause();v.removeAttribute("src");v.load();
   $("player").style.display="none";
+  if(favChanged){favChanged=false;render()}
   const b=$("grid").children[idx];if(b)b.focus();
 }
 function showBar(){$("bar").classList.remove("hide");clearTimeout(barTimer);barTimer=setTimeout(()=>$("bar").classList.add("hide"),4000)}
