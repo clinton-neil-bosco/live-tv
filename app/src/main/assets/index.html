@@ -19,22 +19,33 @@ html,body{height:100%;background:var(--bg);color:var(--ink);font-family:system-u
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
 #top{display:flex;gap:10px;padding:16px 20px;align-items:center;border-bottom:1px solid var(--line)}
 #top input{flex:1;min-width:0;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--side);color:var(--ink);font-size:15px}
+#st{color:var(--mute);font-size:12px;white-space:nowrap}
 button.btn{padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--side);color:var(--ink);font-size:15px;cursor:pointer}
 #grid{flex:1;overflow-y:auto;padding:20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:16px;align-content:start}
 .ch{background:none;border:0;color:var(--ink);cursor:pointer;font-size:12px;text-align:center}
 .ch .lg{height:76px;background:var(--card);border-radius:12px;display:flex;align-items:center;justify-content:center;padding:10px;margin-bottom:6px}
 .ch img{max-width:100%;max-height:100%;object-fit:contain}
 .ch .nm{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2px}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #fff;outline-offset:2px}
 .ch:focus-visible .lg{box-shadow:0 0 0 3px var(--acc)}
-#msg{padding:30px;color:var(--mute)}
+#msg{padding:30px;color:var(--mute);grid-column:1/-1}
 #player{position:fixed;inset:0;background:#000;display:none;z-index:5}
 #player video{width:100%;height:100%}
 #bar{position:absolute;top:0;left:0;right:0;padding:16px 22px;background:linear-gradient(#000c,transparent);display:flex;gap:12px;align-items:center;transition:opacity .3s}
 #bar.hide{opacity:0}
 #pname{flex:1;font-size:18px}
 #perr{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#fff;font-size:20px;text-align:center;padding:30px}
-@media(max-width:700px){#side{width:130px}.cat{font-size:13px;padding:9px 8px}}
+#cfg{position:fixed;inset:0;background:#000d;display:none;z-index:8;align-items:center;justify-content:center;padding:20px}
+#cfgbox{background:var(--side);border:1px solid var(--line);border-radius:16px;padding:20px;width:min(720px,100%);max-height:100%;overflow-y:auto}
+#cfgbox h2{font-size:18px;margin-bottom:6px}
+#cfgbox p{color:var(--mute);font-size:13px;margin-bottom:12px}
+#cfgbtns{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+#urls{width:100%;height:150px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:13px}
+#sug{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+#sug .btn{padding:6px 12px;font-size:13px}
+#sug .btn.on{background:var(--acc);border-color:var(--acc)}
+#cfail{color:#ff9d9d;font-size:12px;margin-bottom:10px}
+@media(max-width:700px){#side{width:130px}.cat{font-size:13px;padding:9px 8px}#st{display:none}}
 </style>
 </head>
 <body>
@@ -43,7 +54,8 @@ button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2
   <div id="main">
     <div id="top">
       <input id="q" type="search" placeholder="Search channels">
-      <button class="btn" id="pl">Playlist</button>
+      <span id="st"></span>
+      <button class="btn" id="pl">Playlists</button>
     </div>
     <div id="grid"></div>
   </div>
@@ -59,13 +71,34 @@ button:focus-visible,input:focus-visible{outline:3px solid #fff;outline-offset:2
     <button class="btn" id="next">Next</button>
   </div>
 </div>
+<div id="cfg"><div id="cfgbox">
+  <h2>Playlists</h2>
+  <p>One link per line. Channels with the same ID or name are merged, and if one stream fails the app tries the same channel from the other playlists.</p>
+  <div id="cfgbtns">
+    <button class="btn" id="csave">Save &amp; reload</button>
+    <button class="btn" id="cdef">Reset to defaults</button>
+    <button class="btn" id="cshow">Show hidden channels again</button>
+    <button class="btn" id="ccancel">Cancel</button>
+  </div>
+  <p>Quick add (select to add or remove):</p>
+  <div id="sug"></div>
+  <p id="cfail"></p>
+  <textarea id="urls" spellcheck="false"></textarea>
+</div></div>
 <script>
-const DEFAULT_URL="https://iptv-org.github.io/iptv/countries/in.m3u";
+const DEFAULTS=[
+ "https://iptv-org.github.io/iptv/countries/in.m3u",
+ "https://iptv-org.github.io/iptv/languages/hin.m3u"
+];
 const $=id=>document.getElementById(id);
-let channels=[],cat="All",list=[],idx=-1,hls=null,barTimer;
+let channels=[],cat="All",list=[],idx=-1,hls=null,barTimer,timer,tok=0,favChanged=false,shown=0,qt,failed=[];
+const PAGE=60,TTL=6*3600e3,B="https://iptv-org.github.io/iptv/";
 const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
-let favs=new Set(JSON.parse(store.get("favs")||"[]")),favChanged=false;
-let dead=new Set(JSON.parse(store.get("dead")||"[]"));
+const jget=(k,d)=>{try{return JSON.parse(store.get(k))||d}catch(e){return d}};
+let favs=new Set(jget("favs",[])),dead=new Set(jget("dead",[])),good=jget("good",{});
+const saveFavs=()=>store.set("favs",JSON.stringify([...favs]));
+const saveDead=()=>store.set("dead",JSON.stringify([...dead]));
+const getSources=()=>{const u=jget("urls",null);return u&&u.length?u:DEFAULTS};
 
 function parseM3U(t){
   const out=[],L=t.split(/\r?\n/);let cur=null;
@@ -73,23 +106,61 @@ function parseM3U(t){
     const l=raw.trim();
     if(l.startsWith("#EXTINF")){
       const a=k=>{const m=l.match(new RegExp(k+'="([^"]*)"'));return m?m[1]:""};
-      cur={name:l.slice(l.lastIndexOf(",")+1).trim()||a("tvg-name"),logo:a("tvg-logo"),group:(a("group-title").split(";")[0])||"Other"};
+      cur={name:l.slice(l.lastIndexOf(",")+1).trim()||a("tvg-name"),logo:a("tvg-logo"),id:a("tvg-id").split("@")[0].toLowerCase(),group:(a("group-title").split(";")[0])||"Other"};
     }else if(l&&!l.startsWith("#")&&cur){cur.url=l;out.push(cur);cur=null}
   }
   return out;
 }
-async function load(url){
-  $("grid").innerHTML='<div id="msg">Loading channels…</div>';
-  try{
-    const r=await fetch(url);if(!r.ok)throw new Error(r.status);
-    channels=parseM3U(await r.text());
-    if(!channels.length)throw new Error("No channels found");
-    store.set("url",url);cat="All";render();
-  }catch(e){$("grid").innerHTML='<div id="msg">Could not load the playlist ('+e.message+'). Press Playlist to enter a different link.</div>'}
+const qOf=n=>/\b(hd|fhd|uhd|4k)\b|\((720|1080|1440|2160)p\)/i.test(n)?"hd":"sd";
+const baseOf=n=>n.toLowerCase().replace(/\(.*?\)|\[.*?\]/g,"").replace(/\b(hd|sd|fhd|uhd|4k)\b/g,"").replace(/[^a-z0-9]/g,"");
+const keyOf=c=>(c.id?"id:"+c.id:"n:"+baseOf(c.name))+"|"+qOf(c.name);
+const isFav=c=>favs.has(c.key)||c.urls.some(u=>favs.has(u));
+
+const status=t=>{$("st").textContent=t};
+function merge(texts){
+  const map=new Map();
+  texts.forEach(t=>parseM3U(t).forEach(c=>{
+    const key=keyOf(c);let m=map.get(key);
+    if(!m){m={key,name:c.name,logo:c.logo,group:c.group,urls:[]};map.set(key,m)}
+    if(!m.logo&&c.logo)m.logo=c.logo;
+    if(!m.urls.includes(c.url))m.urls.push(c.url);
+  }));
+  return [...map.values()];
+}
+async function fetchText(u){
+  const ac=new AbortController(),t=setTimeout(()=>ac.abort(),20000);
+  try{const r=await fetch(u,{signal:ac.signal});if(!r.ok)throw new Error(r.status);return await r.text()}
+  finally{clearTimeout(t)}
+}
+async function refresh(srcs,sig,silent){
+  const res=await Promise.allSettled(srcs.map(fetchText));
+  failed=srcs.filter((u,i)=>res[i].status!=="fulfilled");
+  const merged=merge(res.filter(r=>r.status==="fulfilled").map(r=>r.value));
+  if(!merged.length){
+    if(!silent)$("grid").innerHTML='<div id="msg">Could not load any channels. Check your internet or press Playlists to change the links.</div>';
+    return;
+  }
+  channels=merged;
+  store.set("cache",JSON.stringify({sig,t:Date.now(),ch:merged}));
+  status((srcs.length-failed.length)+"/"+srcs.length+" playlists · "+merged.length+" channels");
+  if(!silent){cat="All";render()}
+  else if($("player").style.display!=="block"&&!cfgOpen())render();
+}
+async function load(force){
+  const srcs=getSources(),sig=srcs.join("|");
+  const c=force?null:jget("cache",null);
+  if(c&&c.sig===sig&&c.ch&&c.ch.length){
+    channels=c.ch;cat="All";render();status(channels.length+" channels");
+    if(Date.now()-c.t>=TTL)refresh(srcs,sig,true);
+    return;
+  }
+  $("grid").innerHTML='<div id="msg">Loading channels…</div>';status("");
+  await refresh(srcs,sig,false);
 }
 function render(){
   const counts={};channels.forEach(c=>counts[c.group]=(counts[c.group]||0)+1);
-  const names=["Favorites","All",...Object.keys(counts).sort()];counts.Favorites=channels.filter(c=>favs.has(c.url)).length;
+  const names=["Favorites","All",...Object.keys(counts).sort()];
+  counts.Favorites=channels.filter(isFav).length;
   $("cats").innerHTML="";
   names.forEach(n=>{
     const b=document.createElement("button");b.className="cat"+(n===cat?" on":"");
@@ -98,53 +169,115 @@ function render(){
     $("cats").append(b);
   });
   const q=$("q").value.toLowerCase();
-  list=channels.filter(c=>{if(!c.name.toLowerCase().includes(q))return false;if(cat==="Favorites")return favs.has(c.url);return(cat==="All"||c.group===cat)&&!dead.has(c.url)});
+  list=channels.filter(c=>{
+    if(!c.name.toLowerCase().includes(q))return false;
+    if(cat==="Favorites")return isFav(c);
+    return(cat==="All"||c.group===cat)&&!c.urls.every(u=>dead.has(u));
+  });
   const g=$("grid");g.innerHTML="";g.scrollTop=0;
   if(!list.length){g.innerHTML='<div id="msg">'+(cat==="Favorites"?"No favorites yet. Open a working channel and press the Favorite button.":"No channels here.")+'</div>';return}
-  const f=document.createDocumentFragment();
-  list.forEach((c,i)=>{
+  shown=0;more();
+}
+function more(){
+  if(shown>=list.length)return;
+  const g=$("grid"),f=document.createDocumentFragment(),end=Math.min(shown+PAGE,list.length);
+  for(let i=shown;i<end;i++){
+    const c=list[i];
     const b=document.createElement("button");b.className="ch";
     const lg=document.createElement("div");lg.className="lg";
-    if(c.logo){const im=document.createElement("img");im.src=c.logo;im.loading="lazy";im.alt="";im.onerror=()=>im.remove();lg.append(im)}
-    const nm=document.createElement("span");nm.className="nm";nm.textContent=(favs.has(c.url)?"★ ":"")+c.name;
+    if(c.logo){const im=document.createElement("img");im.src=c.logo;im.loading="lazy";im.decoding="async";im.alt="";im.onerror=()=>im.remove();lg.append(im)}
+    const nm=document.createElement("span");nm.className="nm";nm.textContent=(isFav(c)?"\u2605 ":"")+c.name;
     b.append(lg,nm);b.onclick=()=>play(i);f.append(b);
-  });
-  g.append(f);
+  }
+  shown=end;g.append(f);
 }
-function updFav(){const c=list[idx];$("fav").textContent=c&&favs.has(c.url)?"★ Favorited":"☆ Favorite"}
-$("fav").onclick=()=>{const c=list[idx];if(!c)return;favs.has(c.url)?favs.delete(c.url):favs.add(c.url);store.set("favs",JSON.stringify([...favs]));favChanged=true;updFav();showBar()};
+$("grid").addEventListener("scroll",()=>{const g=$("grid");if(g.scrollTop+g.clientHeight>g.scrollHeight-800)more()});
+function updFav(){const c=list[idx];$("fav").textContent=c&&isFav(c)?"★ Favorited":"☆ Favorite"}
+$("fav").onclick=()=>{
+  const c=list[idx];if(!c)return;
+  if(isFav(c)){favs.delete(c.key);c.urls.forEach(u=>favs.delete(u))}else favs.add(c.key);
+  saveFavs();favChanged=true;updFav();showBar();
+};
 function play(i){
   if(i<0||i>=list.length)return;
-  idx=i;const c=list[i],v=$("v");
-  $("player").style.display="block";$("pname").textContent=c.name;updFav();$("perr").style.display="none";
-  if(hls){hls.destroy();hls=null}
-  const fail=()=>{$("perr").style.display="flex";$("perr").textContent="This channel isn’t working. Press Next to try another, or Back to leave.";dead.add(c.url);store.set("dead",JSON.stringify([...dead]))};
-  if(window.Hls&&Hls.isSupported()&&/\.m3u8|\.m3u/i.test(c.url)){
-    hls=new Hls();hls.loadSource(c.url);hls.attachMedia(v);
-    hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)fail()});
-  }else{v.src=c.url;v.onerror=fail}
-  v.play().catch(()=>{});
-  showBar();$("next").focus();
+  idx=i;const c=list[i];
+  $("player").style.display="block";updFav();showBar();$("next").focus();
+  let order=[...c.urls],n=0;
+  const g=good[c.key];
+  if(g&&order.includes(g))order=[g,...order.filter(u=>u!==g)];
+  const tryNext=()=>{
+    const t=++tok;clearTimeout(timer);
+    if(hls){hls.destroy();hls=null}
+    const v=$("v");
+    if(n>=order.length){
+      $("pname").textContent=c.name;
+      $("perr").style.display="flex";
+      $("perr").textContent="No working stream found"+(order.length>1?" (tried "+order.length+" sources)":"")+". Press Next to try another channel.";
+      order.forEach(u=>dead.add(u));saveDead();return;
+    }
+    const u=order[n++];
+    $("pname").textContent=c.name+(order.length>1?"  ·  source "+n+"/"+order.length:"");
+    $("perr").style.display="none";
+    const bad=()=>{if(t===tok)tryNext()};
+    v.onerror=bad;
+    v.onplaying=()=>{if(t!==tok)return;clearTimeout(timer);good[c.key]=u;store.set("good",JSON.stringify(good));dead.delete(u);};
+    timer=setTimeout(bad,15000);
+    if(window.Hls&&Hls.isSupported()&&/\.m3u8?/i.test(u)){
+      hls=new Hls();hls.loadSource(u);hls.attachMedia(v);
+      hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)bad()});
+    }else v.src=u;
+    v.play().catch(()=>{});
+  };
+  tryNext();
 }
 function stop(){
+  tok++;clearTimeout(timer);
   if(hls){hls.destroy();hls=null}
-  const v=$("v");v.pause();v.removeAttribute("src");v.load();
+  const v=$("v");v.onerror=null;v.pause();v.removeAttribute("src");v.load();
   $("player").style.display="none";
   if(favChanged){favChanged=false;render()}
   const b=$("grid").children[idx];if(b)b.focus();
 }
 function showBar(){$("bar").classList.remove("hide");clearTimeout(barTimer);barTimer=setTimeout(()=>$("bar").classList.add("hide"),4000)}
 $("back").onclick=stop;$("next").onclick=()=>{showBar();play(idx+1)};$("prev").onclick=()=>{showBar();play(idx-1)};
-$("q").oninput=render;
-$("pl").onclick=()=>{
-  const u=prompt("Playlist (.m3u) link:",store.get("url")||DEFAULT_URL);
-  if(u){dead=new Set();store.set("dead","[]");load(u.trim())}
+$("q").oninput=()=>{clearTimeout(qt);qt=setTimeout(render,250)};
+
+const cfgOpen=()=>$("cfg").style.display==="flex";
+const SUG=[["News",B+"categories/news.m3u"],["Sports",B+"categories/sports.m3u"],["Movies",B+"categories/movies.m3u"],["Music",B+"categories/music.m3u"],["Kids",B+"categories/kids.m3u"],["Entertainment",B+"categories/entertainment.m3u"],["Religious",B+"categories/religious.m3u"],["English",B+"languages/eng.m3u"],["Tamil",B+"languages/tam.m3u"],["Telugu",B+"languages/tel.m3u"],["Malayalam",B+"languages/mal.m3u"],["Bengali",B+"languages/ben.m3u"],["Marathi",B+"languages/mar.m3u"],["Punjabi",B+"languages/pan.m3u"]];
+const urlList=()=>$("urls").value.split(/\s+/).filter(Boolean);
+function paintSug(){
+  const cur=urlList();$("sug").innerHTML="";
+  SUG.forEach(([n,u])=>{
+    const b=document.createElement("button");b.className="btn"+(cur.includes(u)?" on":"");
+    b.textContent=(cur.includes(u)?"\u2713 ":"+ ")+n;
+    b.onclick=()=>{const l=urlList();$("urls").value=(l.includes(u)?l.filter(x=>x!==u):[...l,u]).join("\n");paintSug()};
+    $("sug").append(b);
+  });
+}
+$("urls").addEventListener("input",paintSug);
+function openCfg(){
+  $("urls").value=getSources().join("\n");paintSug();
+  $("cfail").textContent=failed.length?"Could not load: "+failed.join(", "):"";
+  $("cfg").style.display="flex";$("csave").focus();
+}
+function closeCfg(){$("cfg").style.display="none";$("pl").focus()}
+$("pl").onclick=openCfg;$("ccancel").onclick=closeCfg;
+$("csave").onclick=()=>{
+  const u=$("urls").value.split(/\s+/).map(s=>s.trim()).filter(s=>/^https?:\/\//i.test(s));
+  store.set("urls",JSON.stringify(u.length?u:DEFAULTS));closeCfg();load(true);
+};
+$("cdef").onclick=()=>{$("urls").value=DEFAULTS.join("\n");paintSug()};
+$("cshow").onclick=()=>{dead=new Set();saveDead();closeCfg();render()};
+window.onBack=()=>{
+  if(cfgOpen()){closeCfg();return true}
+  if($("player").style.display==="block"){stop();return true}
+  return false;
 };
 
-/* Remote / keyboard navigation: arrow keys move focus to the nearest control */
+/* Remote / keyboard navigation */
 function move(dir){
-  const root=$("player").style.display==="block"?$("player"):document;
-  const els=[...root.querySelectorAll("button,input")].filter(e=>e.offsetParent!==null||e.closest("#bar"));
+  const root=$("player").style.display==="block"?$("player"):cfgOpen()?$("cfg"):document;
+  const els=[...root.querySelectorAll("button,input,textarea")].filter(e=>e.offsetParent!==null||e.closest("#bar"));
   const a=document.activeElement;
   if(!a||!els.includes(a)){els[0]&&els[0].focus();return}
   const r=a.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;
@@ -157,21 +290,23 @@ function move(dir){
     const d=dir==="Left"||dir==="Right"?Math.abs(dx)+Math.abs(dy)*3:Math.abs(dy)+Math.abs(dx)*3;
     if(d<bd){bd=d;best=e}
   }
-  if(best){best.focus();best.scrollIntoView({block:"nearest"})}
+  if(best){best.focus();best.scrollIntoView({block:"nearest"});if(best.classList.contains("ch")&&best.nextElementSibling===null)more()}
 }
 addEventListener("keydown",e=>{
+  const playing=$("player").style.display==="block";
+  if(e.target.tagName==="TEXTAREA"&&e.key.startsWith("Arrow")&&!e.ctrlKey)return;
   if(e.target.id==="q"&&(e.key==="ArrowLeft"||e.key==="ArrowRight"))return;
-  if(e.key.startsWith("Arrow")){e.preventDefault();if($("player").style.display==="block")showBar();move(e.key.slice(5))}
-  else if(e.key==="Escape"||e.key==="Backspace"||e.key==="GoBack"){
-    if($("player").style.display==="block"){e.preventDefault();stop()}
+  if(e.key.startsWith("Arrow")){e.preventDefault();if(playing)showBar();move(e.key.slice(5))}
+  else if(e.key==="Escape"||e.key==="GoBack"||(e.key==="Backspace"&&e.target.tagName!=="TEXTAREA"&&e.target.id!=="q")){
+    if(cfgOpen()){e.preventDefault();closeCfg()}
+    else if(playing){e.preventDefault();stop()}
   }
-  else if($("player").style.display==="block"){
+  else if(playing){
     if(e.key==="ChannelUp"||e.key==="PageUp")play(idx+1);
     if(e.key==="ChannelDown"||e.key==="PageDown")play(idx-1);
   }
 });
-window.onBack=()=>{if($("player").style.display==="block"){stop();return true}return false};
-load(store.get("url")||DEFAULT_URL);
+load();
 </script>
 </body>
 </html>
